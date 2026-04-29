@@ -38,6 +38,7 @@ add_library(llama
             unicode-data.cpp
             unicode.cpp
             unicode.h
+            llamaedge-hooks.cpp
             ${LLAMA_MODELS_SOURCES}
             )
 
@@ -49,7 +50,14 @@ set_target_properties(llama PROPERTIES
 
 target_include_directories(llama PRIVATE .)
 target_include_directories(llama PUBLIC ../include)
+target_include_directories(llama PUBLIC ../include/llamaedge)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
+
+# EdgeWeaver hook support
+option(LLAMAEDGE_ENABLE_HOOKS "llama: enable EdgeWeaver PD hooks" OFF)
+if(LLAMAEDGE_ENABLE_HOOKS)
+    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_HOOKS)
+endif()
 
 target_link_libraries(llama PUBLIC ggml)
 
