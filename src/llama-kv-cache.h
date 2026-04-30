@@ -184,6 +184,32 @@ public:
             size_t        dst_size) const;
 #endif
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+    // Prepare cell metadata for import. Must be called once before layer_import_k/v.
+    // Allocates cells for seq_id with the given positions.
+    // Returns true on success, false if cells cannot be allocated.
+    bool layer_import_prepare(
+            llama_seq_id      seq_id,
+            const llama_pos * pos,
+            uint32_t          cell_count);
+
+    // Import K tensor bytes from host buffer to the layer's K stream for seq_id.
+    // Returns bytes written (should equal src_size on success), 0 on error.
+    size_t layer_import_k(
+            llama_seq_id      seq_id,
+            int32_t           layer_id,
+            const uint8_t   * src,
+            size_t            src_size);
+
+    // Import V tensor bytes from host buffer to the layer's V stream for seq_id.
+    // Returns bytes written (should equal src_size on success), 0 on error.
+    size_t layer_import_v(
+            llama_seq_id      seq_id,
+            int32_t           layer_id,
+            const uint8_t   * src,
+            size_t            src_size);
+#endif
+
     //
     // graph_build API
     //

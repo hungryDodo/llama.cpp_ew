@@ -624,3 +624,51 @@ size_t llamaedge_kv_layer_export_v(
 
 #endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+
+#include "llama-kv-cache.h"
+#include "llama-context.h"
+
+bool llamaedge_kv_layer_import_prepare(
+        struct llama_context * ctx,
+                llama_seq_id   seq_id,
+           const llama_pos   * pos,
+                uint32_t       cell_count) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return false;
+    }
+    return kv->layer_import_prepare(seq_id, pos, cell_count);
+}
+
+size_t llamaedge_kv_layer_import_k(
+        struct llama_context * ctx,
+                llama_seq_id   seq_id,
+                int32_t        layer_id,
+           const uint8_t    * src,
+                size_t         src_size) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->layer_import_k(seq_id, layer_id, src, src_size);
+}
+
+size_t llamaedge_kv_layer_import_v(
+        struct llama_context * ctx,
+                llama_seq_id   seq_id,
+                int32_t        layer_id,
+           const uint8_t    * src,
+                size_t         src_size) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->layer_import_v(seq_id, layer_id, src, src_size);
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+

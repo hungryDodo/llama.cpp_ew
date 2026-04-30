@@ -928,6 +928,40 @@ extern "C" {
                     size_t         dst_size);
 #endif
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+    //
+    // G3 per-layer KV import helper
+    //
+
+    // Prepare cell metadata for import before importing K/V data.
+    // Must be called once before layer_import_k/v for the given sequence.
+    // pos is an array of cell_count positions (one per cell).
+    // Returns true on success, false if cells cannot be allocated.
+    LLAMA_API bool   llamaedge_kv_layer_import_prepare(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+               const llama_pos   * pos,
+                    uint32_t       cell_count);
+
+    // Import K tensor bytes from host buffer to the layer's K stream for seq_id.
+    // Returns bytes written (should equal src_size on success), 0 on error.
+    LLAMA_API size_t llamaedge_kv_layer_import_k(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+               const uint8_t    * src,
+                    size_t         src_size);
+
+    // Import V tensor bytes from host buffer to the layer's V stream for seq_id.
+    // Returns bytes written (should equal src_size on success), 0 on error.
+    LLAMA_API size_t llamaedge_kv_layer_import_v(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+               const uint8_t    * src,
+                    size_t         src_size);
+#endif
+
     //
     // Decoding
     //

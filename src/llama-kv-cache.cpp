@@ -2553,8 +2553,195 @@ size_t llama_kv_cache::layer_export_v(
 #endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
 
 //
-// llama_kv_cache_context
+// G3 per-layer KV import helper
 //
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+
+#include "ggml-backend.h"
+
+bool llama_kv_cache::layer_import_prepare(
+        llama_seq_id      seq_id,
+        const llama_pos * pos,
+        uint32_t          cell_count) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return false;
+    }
+
+    if (cell_count == 0) {
+        return true;
+    }
+
+    const uint32_t strm = seq_to_stream[seq_id];
+    auto & cells = v_cells[strm];
+
+    // Remove existing cells for this sequence
+    seq_rm(seq_id, -1, -1);
+
+    // Find cell_count free cells and set positions + seq_id
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < cells.size() && found < cell_count; ++i) {
+        if (cells.is_empty(i)) {
+            cells.pos_set(i, pos[found]);
+            cells.seq_add(i, seq_id);
+            found++;
+        }
+    }
+
+    if (found != cell_count) {
+        LLAMA_LOG_ERROR("%s: not enough free cells (%u needed, %u found)\n",
+                __func__, cell_count, found);
+        return false;
+    }
+
+    return true;
+}
+
+size_t llama_kv_cache::layer_import_k(
+        llama_seq_id      seq_id,
+        int32_t           layer_id,
+        const uint8_t   * src,
+        size_t            src_size) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        LLAMA_LOG_ERROR("%s: invalid layer_id %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    const uint32_t strm  = seq_to_stream[seq_id];
+    const auto & cells   = v_cells[strm];
+    const auto & layer   = layers[it->second];
+    const uint32_t il    = layer.il;
+
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+    const size_t k_size_row = ggml_row_size(layer.k->type, n_embd_k_gqa);
+
+    // Gather cell indices for this sequence (sorted by cell index)
+    std::vector<uint32_t> cell_idxs;
+    cell_idxs.reserve(cells.size());
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            cell_idxs.push_back(i);
+        }
+    }
+
+    const size_t expected_size = cell_idxs.size() * k_size_row;
+    if (cell_idxs.empty() || src_size < expected_size) {
+        LLAMA_LOG_ERROR("%s: size mismatch for layer %d (need %zu, got %zu)\n",
+                __func__, layer_id, expected_size, src_size);
+        return 0;
+    }
+
+    auto * k = layer.k_stream[strm];
+    if (!k) {
+        LLAMA_LOG_ERROR("%s: K tensor is null for layer %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    // Write K data: one row per cell at the cell's offset
+    size_t offset = 0;
+    for (const auto & idx : cell_idxs) {
+        ggml_backend_tensor_set(k, src + offset, idx * k_size_row, k_size_row);
+        offset += k_size_row;
+    }
+
+    return offset;
+}
+
+size_t llama_kv_cache::layer_import_v(
+        llama_seq_id      seq_id,
+        int32_t           layer_id,
+        const uint8_t   * src,
+        size_t            src_size) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        LLAMA_LOG_ERROR("%s: invalid layer_id %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    const uint32_t strm  = seq_to_stream[seq_id];
+    const auto & cells   = v_cells[strm];
+    const auto & layer   = layers[it->second];
+    const uint32_t il    = layer.il;
+
+    if (!layer.v) {
+        // MLA models may not have V cache
+        return 0;
+    }
+
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+
+    // Gather cell indices for this sequence (sorted by cell index)
+    std::vector<uint32_t> cell_idxs;
+    cell_idxs.reserve(cells.size());
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            cell_idxs.push_back(i);
+        }
+    }
+
+    auto * v = layer.v_stream[strm];
+    if (!v) {
+        LLAMA_LOG_ERROR("%s: V tensor is null for layer %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    size_t expected_size = 0;
+    size_t offset = 0;
+
+    if (!v_trans) {
+        // Non-transposed V: each cell is one row
+        const size_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
+        expected_size = cell_idxs.size() * v_size_row;
+
+        if (cell_idxs.empty() || src_size < expected_size) {
+            LLAMA_LOG_ERROR("%s: V size mismatch for layer %d (need %zu, got %zu)\n",
+                    __func__, layer_id, expected_size, src_size);
+            return 0;
+        }
+
+        for (const auto & idx : cell_idxs) {
+            ggml_backend_tensor_set(v, src + offset, idx * v_size_row, v_size_row);
+            offset += v_size_row;
+        }
+    } else {
+        // Transposed V: each embedding element is stored as a row
+        const size_t v_size_el = ggml_type_size(v->type);
+        const uint32_t kv_size = cells.size();
+        expected_size = cell_idxs.size() * n_embd_v_gqa * v_size_el;
+
+        if (cell_idxs.empty() || src_size < expected_size) {
+            LLAMA_LOG_ERROR("%s: V size mismatch for layer %d (need %zu, got %zu)\n",
+                    __func__, layer_id, expected_size, src_size);
+            return 0;
+        }
+
+        for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+            for (const auto & idx : cell_idxs) {
+                const size_t dst_offset = (idx + (size_t)j * kv_size) * v_size_el;
+                ggml_backend_tensor_set(v, src + offset, dst_offset, v_size_el);
+                offset += v_size_el;
+            }
+        }
+    }
+
+    return offset;
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
 
 llama_kv_cache_context::llama_kv_cache_context(llama_memory_status status) : status(status) {}
 

@@ -65,6 +65,12 @@ if(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
     target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
 endif()
 
+# EdgeWeaver G3 per-layer KV import helper
+option(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3 "llama: enable G3 per-layer KV import helper" OFF)
+if(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3)
+    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3)
+endif()
+
 target_link_libraries(llama PUBLIC ggml)
 
 if (BUILD_SHARED_LIBS)
