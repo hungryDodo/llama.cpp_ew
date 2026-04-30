@@ -885,6 +885,49 @@ extern "C" {
                     llama_seq_id   dest_seq_id,
            llama_state_seq_flags   flags);
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+    //
+    // G2 per-layer KV export helper
+    //
+
+    // Get the number of KV cache cells occupied by a given sequence.
+    // Returns 0 if the sequence is not found or has no cached tokens.
+    LLAMA_API uint32_t llamaedge_kv_cell_count(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id);
+
+    // Get per-layer K/V cache metadata for export.
+    // All out_* pointers are optional (can be NULL).
+    // Returns false if the layer_id is out of range.
+    LLAMA_API bool llamaedge_kv_layer_export_meta(
+            struct llama_context * ctx,
+                    int32_t        layer_id,
+                    int32_t      * out_k_type,
+                    uint64_t     * out_k_row_size,
+                    int32_t      * out_v_type,
+                    uint64_t     * out_v_row_size_or_elem_size,
+                    uint32_t     * out_n_embd_v_gqa,
+                    bool         * out_v_trans);
+
+    // Export K tensor data for a specific layer and sequence into a host buffer.
+    // Returns the number of bytes written (or required, if dst is too small).
+    LLAMA_API size_t llamaedge_kv_layer_export_k(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+                    uint8_t      * dst,
+                    size_t         dst_size);
+
+    // Export V tensor data for a specific layer and sequence into a host buffer.
+    // Returns the number of bytes written (or required, if dst is too small).
+    LLAMA_API size_t llamaedge_kv_layer_export_v(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+                    uint8_t      * dst,
+                    size_t         dst_size);
+#endif
+
     //
     // Decoding
     //

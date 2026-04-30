@@ -155,6 +155,35 @@ public:
     ggml_type type_k() const;
     ggml_type type_v() const;
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+    // Get number of cells occupied by a sequence
+    uint32_t cell_count_for_seq(llama_seq_id seq_id) const;
+
+    // Get per-layer K/V metadata (type, row size, v_trans, n_embd_v_gqa)
+    bool layer_export_meta(
+            int32_t   layer_id,
+            int32_t * out_k_type,
+            uint64_t * out_k_row_size,
+            int32_t * out_v_type,
+            uint64_t * out_v_row_size_or_elem_size,
+            uint32_t * out_n_embd_v_gqa,
+            bool     * out_v_trans) const;
+
+    // Export K tensor bytes for a specific layer and stream to host buffer
+    size_t layer_export_k(
+            llama_seq_id  seq_id,
+            int32_t       layer_id,
+            uint8_t     * dst,
+            size_t        dst_size) const;
+
+    // Export V tensor bytes for a specific layer and stream to host buffer
+    size_t layer_export_v(
+            llama_seq_id  seq_id,
+            int32_t       layer_id,
+            uint8_t     * dst,
+            size_t        dst_size) const;
+#endif
+
     //
     // graph_build API
     //

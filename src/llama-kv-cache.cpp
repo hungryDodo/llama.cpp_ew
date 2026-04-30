@@ -2355,6 +2355,204 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 }
 
 //
+// G2 per-layer KV export helper
+//
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+
+uint32_t llama_kv_cache::cell_count_for_seq(llama_seq_id seq_id) const {
+    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+
+    const auto & cells = v_cells[seq_to_stream[seq_id]];
+
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+bool llama_kv_cache::layer_export_meta(
+        int32_t   layer_id,
+        int32_t * out_k_type,
+        uint64_t * out_k_row_size,
+        int32_t * out_v_type,
+        uint64_t * out_v_row_size_or_elem_size,
+        uint32_t * out_n_embd_v_gqa,
+        bool     * out_v_trans) const {
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        return false;
+    }
+
+    const auto & layer = layers[it->second];
+    const uint32_t il = layer.il;
+
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+
+    // K metadata
+    if (out_k_type) {
+        *out_k_type = (int32_t) layer.k->type;
+    }
+    if (out_k_row_size) {
+        *out_k_row_size = ggml_row_size(layer.k->type, n_embd_k_gqa);
+    }
+
+    // V metadata
+    if (out_v_trans) {
+        *out_v_trans = v_trans;
+    }
+    if (out_n_embd_v_gqa) {
+        *out_n_embd_v_gqa = n_embd_v_gqa;
+    }
+
+    if (layer.v) {
+        if (out_v_type) {
+            *out_v_type = (int32_t) layer.v->type;
+        }
+        if (out_v_row_size_or_elem_size) {
+            if (v_trans) {
+                *out_v_row_size_or_elem_size = ggml_type_size(layer.v->type);
+            } else {
+                *out_v_row_size_or_elem_size = ggml_row_size(layer.v->type, n_embd_v_gqa);
+            }
+        }
+    } else {
+        // MLA models may not have V cache
+        if (out_v_type) {
+            *out_v_type = -1;
+        }
+        if (out_v_row_size_or_elem_size) {
+            *out_v_row_size_or_elem_size = 0;
+        }
+    }
+
+    return true;
+}
+
+size_t llama_kv_cache::layer_export_k(
+        llama_seq_id  seq_id,
+        int32_t       layer_id,
+        uint8_t     * dst,
+        size_t        dst_size) const {
+
+    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        return 0;
+    }
+
+    const uint32_t strm = seq_to_stream[seq_id];
+    const auto & cells  = v_cells[strm];
+    const auto & layer  = layers[it->second];
+    const uint32_t il   = layer.il;
+
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+    const size_t k_size_row = ggml_row_size(layer.k->type, n_embd_k_gqa);
+
+    // Count and gather cells for this sequence
+    std::vector<uint32_t> cell_idxs;
+    cell_idxs.reserve(cells.size());
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            cell_idxs.push_back(i);
+        }
+    }
+
+    const size_t required_size = cell_idxs.size() * k_size_row;
+    if (dst_size < required_size || required_size == 0) {
+        return required_size;
+    }
+
+    auto * k = layer.k_stream[strm];
+    size_t offset = 0;
+    for (const auto & idx : cell_idxs) {
+        ggml_backend_tensor_get(k, dst + offset, idx * k_size_row, k_size_row);
+        offset += k_size_row;
+    }
+
+    return offset;
+}
+
+size_t llama_kv_cache::layer_export_v(
+        llama_seq_id  seq_id,
+        int32_t       layer_id,
+        uint8_t     * dst,
+        size_t        dst_size) const {
+
+    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        return 0;
+    }
+
+    const uint32_t strm = seq_to_stream[seq_id];
+    const auto & cells  = v_cells[strm];
+    const auto & layer  = layers[it->second];
+    const uint32_t il   = layer.il;
+
+    if (!layer.v) {
+        return 0;
+    }
+
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+
+    // Count and gather cells for this sequence
+    std::vector<uint32_t> cell_idxs;
+    cell_idxs.reserve(cells.size());
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            cell_idxs.push_back(i);
+        }
+    }
+
+    size_t required_size = 0;
+    size_t offset = 0;
+    auto * v = layer.v_stream[strm];
+
+    if (!v_trans) {
+        const size_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
+        required_size = cell_idxs.size() * v_size_row;
+
+        if (dst_size < required_size || required_size == 0) {
+            return required_size;
+        }
+
+        for (const auto & idx : cell_idxs) {
+            ggml_backend_tensor_get(v, dst + offset, idx * v_size_row, v_size_row);
+            offset += v_size_row;
+        }
+    } else {
+        // Transposed V: each embedding element is stored as a row
+        const size_t v_size_el = ggml_type_size(v->type);
+        const uint32_t kv_size = cells.size();
+        required_size = cell_idxs.size() * n_embd_v_gqa * v_size_el;
+
+        if (dst_size < required_size || required_size == 0) {
+            return required_size;
+        }
+
+        for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+            for (const auto & idx : cell_idxs) {
+                const size_t src_offset = (idx + (size_t)j * kv_size) * v_size_el;
+                ggml_backend_tensor_get(v, dst + offset, src_offset, v_size_el);
+                offset += v_size_el;
+            }
+        }
+    }
+
+    return offset;
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+
+//
 // llama_kv_cache_context
 //
 

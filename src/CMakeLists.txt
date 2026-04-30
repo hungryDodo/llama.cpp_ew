@@ -59,6 +59,12 @@ if(LLAMAEDGE_ENABLE_HOOKS)
     target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_HOOKS)
 endif()
 
+# EdgeWeaver G2 per-layer KV export helper
+option(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2 "llama: enable G2 per-layer KV export helper" OFF)
+if(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
+    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
+endif()
+
 target_link_libraries(llama PUBLIC ggml)
 
 if (BUILD_SHARED_LIBS)

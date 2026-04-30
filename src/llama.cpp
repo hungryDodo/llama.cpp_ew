@@ -556,3 +556,71 @@ const char * llama_print_system_info(void) {
     return s.c_str();
 }
 
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+
+#include "llama-kv-cache.h"
+#include "llama-context.h"
+
+uint32_t llamaedge_kv_cell_count(struct llama_context * ctx, llama_seq_id seq_id) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->cell_count_for_seq(seq_id);
+}
+
+bool llamaedge_kv_layer_export_meta(
+        struct llama_context * ctx,
+                int32_t        layer_id,
+                int32_t      * out_k_type,
+                uint64_t     * out_k_row_size,
+                int32_t      * out_v_type,
+                uint64_t     * out_v_row_size_or_elem_size,
+                uint32_t     * out_n_embd_v_gqa,
+                bool         * out_v_trans) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return false;
+    }
+    return kv->layer_export_meta(
+            layer_id,
+            out_k_type,
+            out_k_row_size,
+            out_v_type,
+            out_v_row_size_or_elem_size,
+            out_n_embd_v_gqa,
+            out_v_trans);
+}
+
+size_t llamaedge_kv_layer_export_k(
+        struct llama_context * ctx,
+                llama_seq_id   seq_id,
+                int32_t        layer_id,
+                uint8_t      * dst,
+                size_t         dst_size) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->layer_export_k(seq_id, layer_id, dst, dst_size);
+}
+
+size_t llamaedge_kv_layer_export_v(
+        struct llama_context * ctx,
+                llama_seq_id   seq_id,
+                int32_t        layer_id,
+                uint8_t      * dst,
+                size_t         dst_size) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->layer_export_v(seq_id, layer_id, dst, dst_size);
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+
