@@ -2360,7 +2360,10 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 #ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
 
 uint32_t llama_kv_cache::cell_count_for_seq(llama_seq_id seq_id) const {
-    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
 
     const auto & cells = v_cells[seq_to_stream[seq_id]];
 
@@ -2440,7 +2443,10 @@ size_t llama_kv_cache::layer_export_k(
         uint8_t     * dst,
         size_t        dst_size) const {
 
-    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
 
     auto it = map_layer_ids.find(layer_id);
     if (it == map_layer_ids.end()) {
@@ -2485,7 +2491,10 @@ size_t llama_kv_cache::layer_export_v(
         uint8_t     * dst,
         size_t        dst_size) const {
 
-    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
 
     auto it = map_layer_ids.find(layer_id);
     if (it == map_layer_ids.end()) {
@@ -2576,10 +2585,25 @@ bool llama_kv_cache::layer_import_prepare(
     const uint32_t strm = seq_to_stream[seq_id];
     auto & cells = v_cells[strm];
 
-    // Remove existing cells for this sequence
+    // Phase 1 (preflight): count available free cells WITHOUT modifying state.
+    // A cell counts as available if it is already empty OR if it belongs to
+    // this seq_id (and will be freed by seq_rm in the commit phase).
+    uint32_t free_count = 0;
+    for (uint32_t i = 0; i < cells.size() && free_count < cell_count; ++i) {
+        if (cells.is_empty(i) || cells.seq_has(i, seq_id)) {
+            free_count++;
+        }
+    }
+
+    if (free_count < cell_count) {
+        LLAMA_LOG_ERROR("%s: not enough free cells (%u needed, %u available)\n",
+                __func__, cell_count, free_count);
+        return false;
+    }
+
+    // Phase 2 (commit): remove old cells for this seq_id, then allocate.
     seq_rm(seq_id, -1, -1);
 
-    // Find cell_count free cells and set positions + seq_id
     uint32_t found = 0;
     for (uint32_t i = 0; i < cells.size() && found < cell_count; ++i) {
         if (cells.is_empty(i)) {
@@ -2590,8 +2614,10 @@ bool llama_kv_cache::layer_import_prepare(
     }
 
     if (found != cell_count) {
-        LLAMA_LOG_ERROR("%s: not enough free cells (%u needed, %u found)\n",
+        // Rollback: remove any cells we allocated so the caller can retry on a fresh context
+        LLAMA_LOG_ERROR("%s: commit failed (%u needed, %u found), rolling back\n",
                 __func__, cell_count, found);
+        seq_rm(seq_id, -1, -1);
         return false;
     }
 
@@ -2633,7 +2659,7 @@ size_t llama_kv_cache::layer_import_k(
     }
 
     const size_t expected_size = cell_idxs.size() * k_size_row;
-    if (cell_idxs.empty() || src_size < expected_size) {
+    if (cell_idxs.empty() || src_size != expected_size) {
         LLAMA_LOG_ERROR("%s: size mismatch for layer %d (need %zu, got %zu)\n",
                 __func__, layer_id, expected_size, src_size);
         return 0;
@@ -2707,7 +2733,7 @@ size_t llama_kv_cache::layer_import_v(
         const size_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
         expected_size = cell_idxs.size() * v_size_row;
 
-        if (cell_idxs.empty() || src_size < expected_size) {
+        if (cell_idxs.empty() || src_size != expected_size) {
             LLAMA_LOG_ERROR("%s: V size mismatch for layer %d (need %zu, got %zu)\n",
                     __func__, layer_id, expected_size, src_size);
             return 0;
@@ -2723,7 +2749,7 @@ size_t llama_kv_cache::layer_import_v(
         const uint32_t kv_size = cells.size();
         expected_size = cell_idxs.size() * n_embd_v_gqa * v_size_el;
 
-        if (cell_idxs.empty() || src_size < expected_size) {
+        if (cell_idxs.empty() || src_size != expected_size) {
             LLAMA_LOG_ERROR("%s: V size mismatch for layer %d (need %zu, got %zu)\n",
                     __func__, layer_id, expected_size, src_size);
             return 0;
