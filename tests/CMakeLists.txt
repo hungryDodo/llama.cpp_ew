@@ -294,6 +294,9 @@ target_link_libraries(${TEST_TARGET} PRIVATE llama)
 llama_build_and_test(test-alloc.cpp)
 target_include_directories(test-alloc PRIVATE ${PROJECT_SOURCE_DIR}/ggml/src)
 
+# Token chunk range export/import tests
+llama_build(test_token_chunk.cpp)
+
 # B3 chunk streaming tests - TX ring, payload pool, frontier, warm threshold
 llama_build(test-b3-chunk-streaming.cpp)
 

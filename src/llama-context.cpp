@@ -10,6 +10,7 @@
 #include "llama-model.h"
 #include "llama-ext.h"
 #include "llama.h"
+#include "llama-kv-cache.h"
 
 #include <cinttypes>
 #include <cmath>
@@ -2422,6 +2423,27 @@ size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * sr
     }
 }
 
+size_t llama_context::state_seq_get_data_range(llama_seq_id seq_id, uint8_t * dst, size_t size, llama_state_seq_flags flags, llama_pos p0, llama_pos p1) {
+    try {
+        auto * kv = dynamic_cast<llama_kv_cache*>(memory.get());
+        if (!kv) {
+            LLAMA_LOG_ERROR("%s: range export is only supported for llama_kv_cache memory\n", __func__);
+            return 0;
+        }
+        if (dst == nullptr || size == 0) {
+            llama_io_write_dummy io;
+            kv->state_write_range(io, seq_id, flags, p0, p1);
+            return io.n_bytes();
+        }
+        llama_io_write_buffer io(dst, size);
+        kv->state_write_range(io, seq_id, flags, p0, p1);
+        return io.n_bytes();
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: error saving state range: %s\n", __func__, err.what());
+        return 0;
+    }
+}
+
 bool llama_context::state_load_file(const char * filepath, llama_token * tokens_out, size_t n_token_capacity, size_t * n_token_count_out) {
     llama_file file(filepath, "rb");
 
@@ -3411,6 +3433,17 @@ size_t llama_state_seq_set_data_ext(llama_context * ctx, const uint8_t * src, si
     ctx->synchronize();
 
     return ctx->state_seq_set_data(seq_id, src, size, flags);
+}
+
+size_t llama_state_seq_get_data_range(llama_context * ctx, uint8_t * dst, size_t size, llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_state_seq_flags flags) {
+    if (seq_id == -1) {
+        LLAMA_LOG_ERROR("%s: seq_id == -1 not supported for range export\n", __func__);
+        return 0;
+    }
+
+    ctx->synchronize();
+
+    return ctx->state_seq_get_data_range(seq_id, dst, size, flags, p0, p1);
 }
 
 size_t llama_state_seq_save_file(llama_context * ctx, const char * filepath, llama_seq_id seq_id, const llama_token * tokens, size_t n_token_count) {

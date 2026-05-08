@@ -69,6 +69,8 @@ extern "C" {
     typedef int32_t llama_token;
     typedef int32_t llama_seq_id;
 
+    #define LLAMA_POS_MAX 2147483647
+
     enum llama_vocab_type {
         LLAMA_VOCAB_TYPE_NONE   = 0, // For models without vocab
         LLAMA_VOCAB_TYPE_SPM    = 1, // LLaMA tokenizer based on byte-level BPE with byte fallback
@@ -864,6 +866,9 @@ extern "C" {
 // work only with partial states, such as SWA KV cache or recurrent cache (e.g. Mamba)
 #define LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY 1
 
+// Do not clear existing cache cells before importing; merge incrementally.
+#define LLAMA_STATE_SEQ_FLAGS_INCREMENTAL 2
+
     typedef uint32_t llama_state_seq_flags;
 
     LLAMA_API size_t llama_state_seq_get_size_ext(
@@ -883,6 +888,17 @@ extern "C" {
                    const uint8_t * src,
                           size_t   size,
                     llama_seq_id   dest_seq_id,
+           llama_state_seq_flags   flags);
+
+    // Export a range of positions [p0, p1) for a sequence.
+    // Returns bytes written, or 0 on error (rejects seq_id == -1).
+    LLAMA_API size_t llama_state_seq_get_data_range(
+            struct llama_context * ctx,
+                         uint8_t * dst,
+                          size_t   size,
+                    llama_seq_id   seq_id,
+                      llama_pos    p0,
+                      llama_pos    p1,
            llama_state_seq_flags   flags);
 
 #ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2

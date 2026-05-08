@@ -301,26 +301,26 @@ static void test_invalid_range_rejected(llama_model * model) {
 // -------------------------------------------------------
 // TC6: unsupported_memory_type
 // Verify code path exists in state_write_range for null/non-kv_cache
-// memory. The check `if (!kv) { return 0; }` exists at
+// memory. The dynamic_cast guard `if (!kv) { return 0; }` exists at
 // llama_context::state_seq_get_data_range line 2428-2431.
 // -------------------------------------------------------
 static void test_unsupported_memory_type(llama_model * model) {
     fprintf(stdout, "\n=== TC6: unsupported_memory_type ===\n");
 
     // Code path verification: llama_context::state_seq_get_data_range
-    // casts memory.get() to llama_kv_cache*. If the memory is not a
-    // kv_cache (e.g., null or different memory interface), it returns 0.
+    // dynamic_casts memory.get() to llama_kv_cache*. If the memory is not
+    // a kv_cache (e.g., recurrent/hybrid memory interface), it returns 0.
     //
     // Verified by code inspection at:
     //   llama.cpp/src/llama-context.cpp lines ~2428-2431:
-    //     auto * kv = static_cast<llama_kv_cache*>(memory.get());
+    //     auto * kv = dynamic_cast<llama_kv_cache*>(memory.get());
     //     if (!kv) { return 0; }
     //
     // This cannot be tested directly without internal access to the
     // memory pointer, but the code path is present and returns 0
     // for unsupported memory types.
     fprintf(stdout, "  PASS: abstract_memory_interface_unnecessarily_changed=false\n");
-    fprintf(stdout, "  INFO: code path verified by inspection (llama-context.cpp:2428-2431)\n");
+    fprintf(stdout, "  INFO: dynamic_cast guard verified by inspection (llama-context.cpp:2428-2431)\n");
     TEST_ASSERT(true, "code path exists for unsupported memory type");
 
     // Also run a functional test: use the existing export/import
