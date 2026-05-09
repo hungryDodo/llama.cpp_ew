@@ -2401,6 +2401,29 @@ uint32_t llama_kv_cache::cell_count_for_seq(llama_seq_id seq_id) const {
     return count;
 }
 
+int32_t llama_kv_cache::layer_count() const {
+    return (int32_t) layers.size();
+}
+
+bool llama_kv_cache::layer_export_tensors(
+        int32_t       layer_id,
+        ggml_tensor ** out_k,
+        ggml_tensor ** out_v) const {
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        return false;
+    }
+
+    const auto & layer = layers[it->second];
+    if (out_k) {
+        *out_k = layer.k;
+    }
+    if (out_v) {
+        *out_v = layer.v;
+    }
+    return true;
+}
+
 bool llama_kv_cache::layer_export_meta(
         int32_t   layer_id,
         int32_t * out_k_type,

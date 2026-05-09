@@ -570,6 +570,28 @@ uint32_t llamaedge_kv_cell_count(struct llama_context * ctx, llama_seq_id seq_id
     return kv->cell_count_for_seq(seq_id);
 }
 
+int32_t llamaedge_kv_get_n_layers(struct llama_context * ctx) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return 0;
+    }
+    return kv->layer_count();
+}
+
+bool llamaedge_kv_layer_export_tensors(
+        struct llama_context * ctx,
+                int32_t        layer_id,
+                ggml_tensor ** out_k,
+                ggml_tensor ** out_v) {
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        return false;
+    }
+    return kv->layer_export_tensors(layer_id, out_k, out_v);
+}
+
 bool llamaedge_kv_layer_export_meta(
         struct llama_context * ctx,
                 int32_t        layer_id,
@@ -671,4 +693,3 @@ size_t llamaedge_kv_layer_import_v(
 }
 
 #endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
-

@@ -912,6 +912,19 @@ extern "C" {
             struct llama_context * ctx,
                     llama_seq_id   seq_id);
 
+    // Get number of KV cache layers available for per-layer export.
+    // Returns 0 if the active memory backend is not llama_kv_cache.
+    LLAMA_API int32_t llamaedge_kv_get_n_layers(
+            struct llama_context * ctx);
+
+    // Get stable K/V cache tensor pointers for a layer. These pointers are
+    // for identity/binding only; callers must not dereference them.
+    LLAMA_API bool llamaedge_kv_layer_export_tensors(
+            struct llama_context * ctx,
+                    int32_t        layer_id,
+                    ggml_tensor ** out_k,
+                    ggml_tensor ** out_v);
+
     // Get per-layer K/V cache metadata for export.
     // All out_* pointers are optional (can be NULL).
     // Returns false if the layer_id is out of range.

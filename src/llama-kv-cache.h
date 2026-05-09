@@ -162,6 +162,16 @@ public:
     // Get number of cells occupied by a sequence
     uint32_t cell_count_for_seq(llama_seq_id seq_id) const;
 
+    // Get number of KV cache layers.
+    int32_t layer_count() const;
+
+    // Get stable K/V tensor pointers for a layer. Pointers are returned for
+    // identity/binding only; callers must not dereference them.
+    bool layer_export_tensors(
+            int32_t       layer_id,
+            ggml_tensor ** out_k,
+            ggml_tensor ** out_v) const;
+
     // Get per-layer K/V metadata (type, row size, v_trans, n_embd_v_gqa)
     bool layer_export_meta(
             int32_t   layer_id,
