@@ -39,6 +39,14 @@ add_library(llama
             unicode.cpp
             unicode.h
             llamaedge-hooks.cpp
+            llamaedge-tx-ring.cpp
+            llamaedge-kv-export.cpp
+            llamaedge-frontier.cpp
+            llamaedge-wire-format.cpp
+            llamaedge-thinning.cpp
+            llamaedge-quant.cpp
+            llamaedge-profile.cpp
+            llamaedge-b4-pipeline.cpp
             ${LLAMA_MODELS_SOURCES}
             )
 
