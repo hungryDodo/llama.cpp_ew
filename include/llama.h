@@ -901,9 +901,9 @@ extern "C" {
                       llama_pos    p1,
            llama_state_seq_flags   flags);
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
     //
-    // G2 per-layer KV export helper
+    // per-layer KV export helper
     //
 
     // Get the number of KV cache cells occupied by a given sequence.
@@ -957,9 +957,9 @@ extern "C" {
                     size_t         dst_size);
 #endif
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
     //
-    // G3 per-layer KV import helper
+    // per-layer KV import helper
     //
 
     // Prepare cell metadata for import before importing K/V data.
@@ -989,6 +989,11 @@ extern "C" {
                     int32_t        layer_id,
                const uint8_t    * src,
                     size_t         src_size);
+
+    // Diagnostic: dump KV cache cell state for a given sequence to stderr.
+    LLAMA_API void llamaedge_kv_cell_diag(
+            struct llama_context * ctx,
+                    int32_t        seq_id);
 #endif
 
     //

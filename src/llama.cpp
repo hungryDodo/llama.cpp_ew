@@ -556,7 +556,7 @@ const char * llama_print_system_info(void) {
     return s.c_str();
 }
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
 #include "llama-kv-cache.h"
 #include "llama-context.h"
@@ -644,9 +644,9 @@ size_t llamaedge_kv_layer_export_v(
     return kv->layer_export_v(seq_id, layer_id, dst, dst_size);
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
 
 #include "llama-kv-cache.h"
 #include "llama-context.h"
@@ -692,4 +692,19 @@ size_t llamaedge_kv_layer_import_v(
     return kv->layer_import_v(seq_id, layer_id, src, src_size);
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
+
+void llamaedge_kv_cell_diag(struct llama_context * ctx, int32_t seq_id) {
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
+    auto * memory = ctx->get_memory();
+    auto * kv = dynamic_cast<llama_kv_cache *>(memory);
+    if (!kv) {
+        fprintf(stderr, "[C8.2-cell-diag] KV cache not available\n");
+        return;
+    }
+    kv->cell_diag(seq_id);
+#else
+    (void)ctx; (void)seq_id;
+    fprintf(stderr, "[C8.2-cell-diag] G3 import not enabled in this build\n");
+#endif
+}

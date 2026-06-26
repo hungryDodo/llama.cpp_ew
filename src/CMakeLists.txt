@@ -67,16 +67,16 @@ if(LLAMAEDGE_ENABLE_HOOKS)
     target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_HOOKS)
 endif()
 
-# EdgeWeaver G2 per-layer KV export helper
-option(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2 "llama: enable G2 per-layer KV export helper" OFF)
-if(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
-    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2)
+# EdgeWeaver per-layer KV export helper
+option(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT "llama: enable per-layer KV export helper" OFF)
+if(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT)
+    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_EXPORT)
 endif()
 
-# EdgeWeaver G3 per-layer KV import helper
-option(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3 "llama: enable G3 per-layer KV import helper" OFF)
-if(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3)
-    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3)
+# EdgeWeaver per-layer KV import helper
+option(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT "llama: enable per-layer KV import helper" OFF)
+if(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT)
+    target_compile_definitions(llama PUBLIC LLAMAEDGE_ENABLE_KV_LAYER_IMPORT)
 endif()
 
 target_link_libraries(llama PUBLIC ggml)

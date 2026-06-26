@@ -158,7 +158,7 @@ public:
     ggml_type type_k() const;
     ggml_type type_v() const;
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
     // Get number of cells occupied by a sequence
     uint32_t cell_count_for_seq(llama_seq_id seq_id) const;
 
@@ -197,7 +197,7 @@ public:
             size_t        dst_size) const;
 #endif
 
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
     // Prepare cell metadata for import. Must be called once before layer_import_k/v.
     // Allocates cells for seq_id with the given positions.
     // Returns true on success, false if cells cannot be allocated.
@@ -275,6 +275,8 @@ public:
 
     void set_input_k_rot(ggml_tensor * dst) const;
     void set_input_v_rot(ggml_tensor * dst) const;
+
+    void cell_diag(llama_seq_id seq_id) const;
 
 private:
     const llama_model & model;

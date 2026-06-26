@@ -1639,6 +1639,34 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
         set_input_kq_mask_impl<false>(args, data);
     }
 
+    // EdgeWeaver diagnostic: optional kq_mask dump controlled by EDGEWEAVER_KQ_MASK_DIAG=1
+    if (getenv("EDGEWEAVER_KQ_MASK_DIAG")) {
+        for (int ii = 0; ii < n_tokens; ++ii) {
+            int64_t unmasked = 0, empty_ct = 0, seq_mismatch = 0, future_ct = 0;
+            int64_t total = n_kv;
+            float max_val = -INFINITY;
+            for (int64_t j = 0; j < n_kv; ++j) {
+                float v = data[ii * n_kv + j];
+                if (v > max_val) max_val = v;
+                if (v > -1e6f) unmasked++;
+            }
+            // Re-scan with seq_id to determine reasons
+            const llama_seq_id seq_id = ubatch->seq_id[ii][0];
+            const auto & cells = v_cells[seq_to_stream[seq_id]];
+            const llama_pos p1 = ubatch->pos[ii];
+            for (int64_t j = 0; j < (int64_t)cells.size() && j < n_kv; ++j) {
+                if (cells.is_empty(j)) { empty_ct++; continue; }
+                if (!cells.seq_has(j, seq_id)) { seq_mismatch++; continue; }
+                llama_pos p0 = cells.pos_get(j);
+                if (causal_attn && p0 > p1) { future_ct++; continue; }
+            }
+            fprintf(stderr, "[C8.2-kq-mask] token[%d] seq=%d pos=%d n_kv=%ld "
+                    "unmasked=%ld max_val=%.4f empty=%ld seq_mismatch=%ld future=%ld\n",
+                    ii, (int)seq_id, (int)p1, total,
+                    unmasked, max_val, empty_ct, seq_mismatch, future_ct);
+        }
+    }
+
     //const int64_t t_end = ggml_time_us();
 
     //LLAMA_LOG_ERROR("%s: kq mask time: %0.3f ms\n", __func__, (t_end - t_start)/1000.0);
@@ -2379,9 +2407,9 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 }
 
 //
-// G2 per-layer KV export helper
+// per-layer KV export helper
 //
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
 uint32_t llama_kv_cache::cell_count_for_seq(llama_seq_id seq_id) const {
     if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
@@ -2606,12 +2634,12 @@ size_t llama_kv_cache::layer_export_v(
     return offset;
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
 //
-// G3 per-layer KV import helper
+// per-layer KV import helper
 //
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
 
 #include "ggml-backend.h"
 
@@ -2718,11 +2746,21 @@ size_t llama_kv_cache::layer_import_k(
         return 0;
     }
 
-    // Write K data: one row per cell at the cell's offset
+    // Write K data: use single contiguous write when cells are sequential
+    // (matches state_read_data fast path, critical for correct graph compilation)
+    bool contiguous = true;
+    for (size_t ci = 1; ci < cell_idxs.size(); ++ci) {
+        if (cell_idxs[ci] != cell_idxs[ci-1] + 1) { contiguous = false; break; }
+    }
     size_t offset = 0;
-    for (const auto & idx : cell_idxs) {
-        ggml_backend_tensor_set(k, src + offset, idx * k_size_row, k_size_row);
-        offset += k_size_row;
+    if (contiguous && !cell_idxs.empty()) {
+        ggml_backend_tensor_set(k, src, cell_idxs[0] * k_size_row, cell_idxs.size() * k_size_row);
+        offset = cell_idxs.size() * k_size_row;
+    } else {
+        for (const auto & idx : cell_idxs) {
+            ggml_backend_tensor_set(k, src + offset, idx * k_size_row, k_size_row);
+            offset += k_size_row;
+        }
     }
 
     return offset;
@@ -2775,6 +2813,12 @@ size_t llama_kv_cache::layer_import_v(
     size_t expected_size = 0;
     size_t offset = 0;
 
+    // Check if cell indices are contiguous (for fast-path batch write)
+    bool contiguous = true;
+    for (size_t ci = 1; ci < cell_idxs.size(); ++ci) {
+        if (cell_idxs[ci] != cell_idxs[ci-1] + 1) { contiguous = false; break; }
+    }
+
     if (!v_trans) {
         // Non-transposed V: each cell is one row
         const size_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
@@ -2786,9 +2830,14 @@ size_t llama_kv_cache::layer_import_v(
             return 0;
         }
 
-        for (const auto & idx : cell_idxs) {
-            ggml_backend_tensor_set(v, src + offset, idx * v_size_row, v_size_row);
-            offset += v_size_row;
+        if (contiguous && !cell_idxs.empty()) {
+            ggml_backend_tensor_set(v, src, cell_idxs[0] * v_size_row, cell_idxs.size() * v_size_row);
+            offset = cell_idxs.size() * v_size_row;
+        } else {
+            for (const auto & idx : cell_idxs) {
+                ggml_backend_tensor_set(v, src + offset, idx * v_size_row, v_size_row);
+                offset += v_size_row;
+            }
         }
     } else {
         // Transposed V: each embedding element is stored as a row
@@ -2802,11 +2851,21 @@ size_t llama_kv_cache::layer_import_v(
             return 0;
         }
 
-        for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
-            for (const auto & idx : cell_idxs) {
-                const size_t dst_offset = (idx + (size_t)j * kv_size) * v_size_el;
-                ggml_backend_tensor_set(v, src + offset, dst_offset, v_size_el);
-                offset += v_size_el;
+        if (contiguous && !cell_idxs.empty()) {
+            // Contiguous cells: write one contiguous block per embedding dim
+            const uint32_t head = cell_idxs[0];
+            for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+                const size_t dst_offset = (head + (size_t)j * kv_size) * v_size_el;
+                ggml_backend_tensor_set(v, src + offset, dst_offset, cell_idxs.size() * v_size_el);
+                offset += cell_idxs.size() * v_size_el;
+            }
+        } else {
+            for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+                for (const auto & idx : cell_idxs) {
+                    const size_t dst_offset = (idx + (size_t)j * kv_size) * v_size_el;
+                    ggml_backend_tensor_set(v, src + offset, dst_offset, v_size_el);
+                    offset += v_size_el;
+                }
             }
         }
     }
@@ -2814,7 +2873,36 @@ size_t llama_kv_cache::layer_import_v(
     return offset;
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+void llama_kv_cache::cell_diag(llama_seq_id seq_id) const {
+    if (seq_id < 0 || (size_t)seq_id >= seq_to_stream.size()) {
+        fprintf(stderr, "[C8.2-cell-diag] invalid seq_id=%d\n", (int)seq_id);
+        return;
+    }
+    const uint32_t strm = seq_to_stream[seq_id];
+    const auto & cells = v_cells[strm];
+
+    fprintf(stderr, "[C8.2-cell-diag] seq_id=%d stream=%u n_cells=%u used=%u used_max_p1=%u\n",
+            (int)seq_id, strm, (uint32_t)cells.size(),
+            cells.get_used(), cells.used_max_p1());
+
+    uint32_t n_occupied = 0, n_seq_match = 0;
+    for (uint32_t i = 0; i < cells.size() && n_occupied < 32; ++i) {
+        if (!cells.is_empty(i)) {
+            n_occupied++;
+            bool has_seq = cells.seq_has(i, seq_id);
+            if (has_seq) n_seq_match++;
+            if (n_occupied <= 16) {
+                llama_pos p = cells.pos_get(i);
+                fprintf(stderr, "[C8.2-cell-diag]   cell[%u] pos=%d seq_has(%d)=%s\n",
+                        i, (int)p, (int)seq_id, has_seq ? "true" : "false");
+            }
+        }
+    }
+    fprintf(stderr, "[C8.2-cell-diag] occupied=%u seq_match=%u (first 32 non-empty scanned)\n",
+            n_occupied, n_seq_match);
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
 
 llama_kv_cache_context::llama_kv_cache_context(llama_memory_status status) : status(status) {}
 

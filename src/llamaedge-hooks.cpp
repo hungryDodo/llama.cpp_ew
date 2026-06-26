@@ -19,7 +19,7 @@ llamaedge_hook_registry * llamaedge_get_registry(struct llama_context * ctx) {
     return g_registry;
 }
 #else
-static inline llamaedge_hook_registry * llamaedge_get_registry(struct llama_context * ctx) {
+inline llamaedge_hook_registry * llamaedge_get_registry(struct llama_context * ctx) {
     (void)ctx;
     return nullptr;
 }
