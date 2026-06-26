@@ -989,6 +989,11 @@ extern "C" {
                     int32_t        layer_id,
                const uint8_t    * src,
                     size_t         src_size);
+
+    // Diagnostic: dump KV cache cell state for a given sequence to stderr.
+    LLAMA_API void llamaedge_kv_cell_diag(
+            struct llama_context * ctx,
+                    int32_t        seq_id);
 #endif
 
     //
