@@ -1639,7 +1639,7 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
         set_input_kq_mask_impl<false>(args, data);
     }
 
-    // C8.2: kq_mask diagnostic (controlled by EDGEWEAVER_KQ_MASK_DIAG=1)
+    // EdgeWeaver diagnostic: optional kq_mask dump controlled by EDGEWEAVER_KQ_MASK_DIAG=1
     if (getenv("EDGEWEAVER_KQ_MASK_DIAG")) {
         for (int ii = 0; ii < n_tokens; ++ii) {
             int64_t unmasked = 0, empty_ct = 0, seq_mismatch = 0, future_ct = 0;
@@ -2407,9 +2407,9 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 }
 
 //
-// G2 per-layer KV export helper
+// per-layer KV export helper
 //
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
 uint32_t llama_kv_cache::cell_count_for_seq(llama_seq_id seq_id) const {
     if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
@@ -2634,12 +2634,12 @@ size_t llama_kv_cache::layer_export_v(
     return offset;
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT_G2
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT
 
 //
-// G3 per-layer KV import helper
+// per-layer KV import helper
 //
-#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
 
 #include "ggml-backend.h"
 
@@ -2902,7 +2902,7 @@ void llama_kv_cache::cell_diag(llama_seq_id seq_id) const {
             n_occupied, n_seq_match);
 }
 
-#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT_G3
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
 
 llama_kv_cache_context::llama_kv_cache_context(llama_memory_status status) : status(status) {}
 
