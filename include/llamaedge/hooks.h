@@ -216,6 +216,7 @@ LLAMA_API int llamaedge_kv_export_unregister(struct llama_context * ctx, llamaed
 LLAMA_API int llamaedge_kv_install_register(struct llama_context * ctx, llamaedge_kv_install_fn fn, void * user_data);
 LLAMA_API int llamaedge_kv_install_unregister(struct llama_context * ctx, llamaedge_kv_install_fn fn);
 LLAMA_API int llamaedge_kv_export_layers(struct llama_context * ctx, int32_t seq_id, uint32_t n_tokens);
+LLAMA_API void llamaedge_kv_cell_diag(struct llama_context * ctx, int32_t seq_id);
 LLAMA_API int llamaedge_kv_install_chunk(struct llama_context * ctx, int32_t seq_id, int32_t layer_id,
     const float * k_data, const float * v_data,
     uint32_t n_tokens, uint32_t n_kv_heads, uint32_t n_embd_head_k, uint32_t n_embd_head_v);
