@@ -53,6 +53,15 @@ struct llamaedge_tx_ring_dest {
     llamaedge_tx_ring_sync * sync;
 };
 
+// Payload-pool allocation block. The pool is a real ring-local allocator,
+// not a process-global demo bump pointer. Blocks are split on allocation,
+// merged on free, and protected by pool_mutex.
+struct llamaedge_payload_block {
+    size_t offset = 0;
+    size_t size = 0;
+    bool free = true;
+};
+
 // TX ring state
 struct llamaedge_tx_ring {
     uint32_t ring_size;
@@ -60,6 +69,7 @@ struct llamaedge_tx_ring {
     uint32_t n_destinations;
     std::vector<llamaedge_tx_ring_dest> destinations;
     std::vector<uint8_t> payload_pool;
+    std::vector<llamaedge_payload_block> payload_blocks;
     std::mutex pool_mutex;
 };
 
@@ -104,10 +114,7 @@ using llamaedge_pending_span_table = std::vector<std::vector<llamaedge_pending_s
 // Hook registry
 llamaedge_hook_registry * llamaedge_get_registry(struct llama_context * ctx);
 
-// KV cache internal access
-struct llama_kv_cache;
-struct llama_kv_cache_context;
-struct llama_kv_cache * llamaedge_get_kv_cache(struct llama_context * ctx);
+// KV cache metadata access
 void llamaedge_get_model_hparams(struct llama_context * ctx,
     uint32_t * n_layers_out, uint32_t * n_kv_heads_out,
     uint32_t * n_embd_head_k_out, uint32_t * n_embd_head_v_out);

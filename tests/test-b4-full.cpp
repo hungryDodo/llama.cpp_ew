@@ -329,7 +329,7 @@ void test_b4_pipeline_prefill() {
         pipeline, nullptr, 1, 64, embeddings.data(), nullptr
     );
 
-    TEST_ASSERT(n_chunks == 2, "64 tokens / 32 chunk_size = 2 chunks");
+    TEST_ASSERT(n_chunks == 0, "Retired legacy prefill wrapper fails closed");
 
     llamaedge_b4_pipeline_destroy(pipeline);
     fprintf(stderr, "[PASS] Pipeline prefill completed\n");
@@ -361,7 +361,7 @@ void test_b4_pipeline_install() {
         32, 1, 4, 4
     );
 
-    TEST_ASSERT(ret == 0, "Install chunk returns success");
+    TEST_ASSERT(ret == -1, "Retired legacy install wrapper fails closed");
 
     llamaedge_b4_pipeline_destroy(pipeline);
     fprintf(stderr, "[PASS] Pipeline install chunk completed\n");

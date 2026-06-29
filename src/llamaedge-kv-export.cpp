@@ -2,7 +2,7 @@
 
 
 // ============================================================
-// B3: Per-Layer KV Export Hooks
+// B3 Streaming Full-KV Baseline: per-layer KV export hooks
 // ============================================================
 
 LLAMA_API int llamaedge_kv_export_register(
@@ -118,35 +118,12 @@ LLAMA_API int llamaedge_kv_install_unregister(
 }
 
 // ============================================================
-// B3: Layer Iteration API
+// B3 Streaming Full-KV Baseline: layer iteration API
 // ============================================================
 
 // ============================================================
-// B3: Per-Layer KV Export Hooks - Internal Access
+// B3 Streaming Full-KV Baseline: per-layer KV export hooks - internal access
 // ============================================================
-
-// Forward declarations for llama.cpp internal types
-struct llama_kv_cache;
-struct llama_kv_cache_context;
-
-// Access the internal KV cache from context's memory
-// Returns nullptr if memory is not a standard KV cache
-struct llama_kv_cache * llamaedge_get_kv_cache(struct llama_context * ctx) {
-    if (!ctx) {
-        return nullptr;
-    }
-
-    // Get the memory interface from context
-    llama_memory_t mem = llama_get_memory(ctx);
-    if (!mem) {
-        return nullptr;
-    }
-
-    // The memory is actually a llama_kv_cache, but it's internal
-    // For now, we'll work with what we can access through public API
-    // In a full implementation, we'd need internal API access or friend access
-    return nullptr;  // Placeholder - full access requires llama.cpp internal API
-}
 
 // Get model hyperparameters for KV export
 void llamaedge_get_model_hparams(struct llama_context * ctx,
@@ -217,9 +194,16 @@ size_t llamaedge_deserialize_kv_tensor(const uint8_t * src,
         return n_elements * sizeof(float);
     }
 
-    // For other types, would need dequantization - not implemented yet
-    // For now, just return 0 to indicate no data
-    (void)dst;
+    if (tensor_type == GGML_TYPE_F16) {
+        const ggml_fp16_t * fp16 = reinterpret_cast<const ggml_fp16_t *>(src);
+        ggml_fp16_to_fp32_row(fp16, dst, n_elements);
+        return n_elements * sizeof(ggml_fp16_t);
+    }
+
+    // Quantized GGML tensor rows are intentionally not converted here.
+    // EdgeWeaver's production transport-quantized path uses explicit
+    // token-layer tile frames with scale/granularity metadata. Returning 0
+    // makes unsupported legacy export hooks fail closed instead of guessing.
     return 0;
 }
 
@@ -276,7 +260,10 @@ LLAMA_API int llamaedge_kv_export_layers(
     // Iterate all layers and call registered hooks with parsed data
     int exported = 0;
     uint32_t actual_n_tokens = n_tokens > 0 ? n_tokens : parsed->n_tokens;
-    if (actual_n_tokens == 0) actual_n_tokens = 32; // fallback
+    if (actual_n_tokens == 0) {
+        llamaedge_kv_parse_state_free(parsed);
+        return 0;
+    }
 
     for (int32_t layer = 0; layer < n_layers && layer < (int32_t)parsed->n_layer; layer++) {
         llamaedge_kv_layer_data * layer_data = &parsed->layers[layer];
@@ -313,8 +300,8 @@ LLAMA_API int llamaedge_kv_export_layers(
         } else if (layer_data->v_trans && layer_data->v_data_trans) {
             // Transposed V: layout is [n_embd_v_gqa][n_tokens][n_kv_heads] elements
             // but stored as [n_embd_v_gqa][n_tokens * n_kv_heads * elem_size]
-            // The Python side will handle de-transpose
-            // For now, we just pass the pointer
+            // Transposed V export through this legacy float-hook path is skipped;
+            // production transport uses token-layer tile frames with explicit layout metadata
         }
 
         // Call hook for this layer with real model dimensions
@@ -375,4 +362,3 @@ LLAMA_API int llamaedge_kv_install_chunk(
     return -1;
 #endif
 }
-

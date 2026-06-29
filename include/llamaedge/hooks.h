@@ -182,9 +182,14 @@ typedef struct llamaedge_kv_layer_data {
 } llamaedge_kv_layer_data;
 
 typedef struct llamaedge_kv_parsed_state {
+    uint32_t stream_count;
+    uint32_t stream_index;
+    uint32_t cell_count;
     bool v_trans;
     uint32_t n_layer;
     uint32_t n_tokens;
+    size_t payload_offset;
+    size_t payload_bytes;
     llamaedge_kv_layer_data * layers;
     const uint8_t * payload_end;
 } llamaedge_kv_parsed_state;
