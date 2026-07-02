@@ -179,7 +179,7 @@ void test_k_quantization() {
         k_data, 2, 1, 4, &config, quantized, scales
     );
 
-    TEST_ASSERT(bytes == 8, "Bytes for quantized K");
+    TEST_ASSERT(bytes == 4, "Bytes for bit-packed quantized K4");
     TEST_ASSERT(scales[0] > 0 && scales[0] < 10, "Scale computed for channel 0");
 
     // Dequantize and verify
@@ -219,7 +219,7 @@ void test_v_quantization() {
         v_data, 2, 1, 4, &config, quantized, scales
     );
 
-    TEST_ASSERT(bytes == 8, "Bytes for quantized V");
+    TEST_ASSERT(bytes == 3, "Bytes for bit-packed quantized V3");
     TEST_ASSERT(scales[0] > 0 && scales[1] > 0, "Scales computed for each token");
 
     // Dequantize and verify

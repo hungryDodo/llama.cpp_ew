@@ -222,21 +222,26 @@ void test_warm_threshold_layer() {
     config.n_warm_chunks = 2;        // First 2 chunks needed
     config.chunk_size_tokens = 32;
 
-    // Scenario: layer 0 and 1 have frontier at 64 (past token 0)
-    // This should trigger warm threshold for decode position 0
+    // Ordinary llama_decode is safe only when every layer has a contiguous
+    // prefix beyond the requested decode position. Partial-layer warm state is
+    // useful telemetry, but it must not be promoted into a decode admission.
     llamaedge_frontier_update(frontier, 0, 0, 64);
     llamaedge_frontier_update(frontier, 1, 0, 64);
 
     bool warm = llamaedge_warm_threshold_met(frontier, 0, &config);
-    TEST_ASSERT(warm == true, "Warm threshold met: first 2 layers > pos 0");
+    TEST_ASSERT(warm == false, "Partial layers alone do not admit llama_decode");
 
-    // Decode position 50 should still be okay if layer frontier > 50
+    llamaedge_frontier_update(frontier, 2, 0, 64);
+    llamaedge_frontier_update(frontier, 3, 0, 64);
+
+    warm = llamaedge_warm_threshold_met(frontier, 0, &config);
+    TEST_ASSERT(warm == true, "All layers warm beyond pos 0");
+
     warm = llamaedge_warm_threshold_met(frontier, 50, &config);
-    TEST_ASSERT(warm == true, "Warm threshold met: first 2 layers > pos 50");
+    TEST_ASSERT(warm == true, "All layers warm beyond pos 50");
 
-    // Decode position 100 should NOT be okay (layers only at 64)
     warm = llamaedge_warm_threshold_met(frontier, 100, &config);
-    TEST_ASSERT(warm == false, "Warm threshold NOT met: layers only at 64");
+    TEST_ASSERT(warm == false, "Warm threshold NOT met: all layers only at 64");
 
     llamaedge_frontier_destroy(frontier);
 }
@@ -260,9 +265,11 @@ void test_warm_threshold_chunk() {
         llamaedge_frontier_update(frontier, i, 0, 64);
     }
 
-    // 2 chunks installed, need 3 - should NOT trigger
+    // The K_warm chunk threshold is a diagnostic watermark. Since every layer
+    // has a safe prefix beyond decode position 0, ordinary decode at pos 0 is
+    // safe even though the diagnostic watermark is below 3 chunks.
     bool warm = llamaedge_warm_threshold_met(frontier, 0, &config);
-    TEST_ASSERT(warm == false, "Not warm: only 2 chunks installed, need 3");
+    TEST_ASSERT(warm == true, "Warm for decode pos 0 once all layers have a prefix");
 
     // Install 3rd chunk (96 tokens) in ALL layers to make chunks contiguous
     for (uint32_t i = 0; i < frontier->n_layers; ++i) {

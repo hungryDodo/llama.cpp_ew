@@ -11,7 +11,9 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
+#include <utility>
 
 static bool ggml_is_power_of_2(int n) {
     return (n & (n - 1)) == 0;
@@ -2406,6 +2408,74 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
     return true;
 }
 
+
+//
+// EdgeWeaver per-layer KV helpers
+//
+#if defined(LLAMAEDGE_ENABLE_KV_LAYER_EXPORT) || defined(LLAMAEDGE_ENABLE_KV_LAYER_IMPORT)
+
+// Collect cells for a sequence in logical position order rather than physical
+// KV-cell index order. llama.cpp may reuse/free/shift cells under continuous
+// batching, so physical cell order is not a stable proxy for token position.
+static std::vector<uint32_t> llamaedge_seq_cells_by_pos(
+        const llama_kv_cells & cells,
+        llama_seq_id           seq_id) {
+    std::vector<std::pair<llama_pos, uint32_t>> ordered;
+    ordered.reserve(cells.size());
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            ordered.emplace_back(cells.pos_get(i), i);
+        }
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const auto & lhs, const auto & rhs) {
+        if (lhs.first != rhs.first) {
+            return lhs.first < rhs.first;
+        }
+        return lhs.second < rhs.second;
+    });
+
+    std::vector<uint32_t> out;
+    out.reserve(ordered.size());
+    for (const auto & item : ordered) {
+        out.push_back(item.second);
+    }
+    return out;
+}
+
+static bool llamaedge_seq_cells_for_positions(
+        const llama_kv_cells        & cells,
+        llama_seq_id                  seq_id,
+        const llama_pos             * pos,
+        uint32_t                      cell_count,
+        std::vector<uint32_t>       & out) {
+    out.clear();
+    if (cell_count == 0) {
+        return true;
+    }
+    if (!pos) {
+        return false;
+    }
+
+    out.reserve(cell_count);
+    for (uint32_t pidx = 0; pidx < cell_count; ++pidx) {
+        const llama_pos wanted = pos[pidx];
+        bool found = false;
+        for (uint32_t i = 0; i < cells.size(); ++i) {
+            if (!cells.is_empty(i) && cells.seq_has(i, seq_id) && cells.pos_get(i) == wanted) {
+                out.push_back(i);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+#endif // LLAMAEDGE_ENABLE_KV_LAYER_EXPORT || LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
+
 //
 // per-layer KV export helper
 //
@@ -2536,14 +2606,8 @@ size_t llama_kv_cache::layer_export_k(
     const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
     const size_t k_size_row = ggml_row_size(layer.k->type, n_embd_k_gqa);
 
-    // Count and gather cells for this sequence
-    std::vector<uint32_t> cell_idxs;
-    cell_idxs.reserve(cells.size());
-    for (uint32_t i = 0; i < cells.size(); ++i) {
-        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
-            cell_idxs.push_back(i);
-        }
-    }
+    // Gather cells in logical token-position order, not physical cell order.
+    const std::vector<uint32_t> cell_idxs = llamaedge_seq_cells_by_pos(cells, seq_id);
 
     const size_t required_size = cell_idxs.size() * k_size_row;
     if (dst_size < required_size || required_size == 0) {
@@ -2587,14 +2651,8 @@ size_t llama_kv_cache::layer_export_v(
 
     const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
 
-    // Count and gather cells for this sequence
-    std::vector<uint32_t> cell_idxs;
-    cell_idxs.reserve(cells.size());
-    for (uint32_t i = 0; i < cells.size(); ++i) {
-        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
-            cell_idxs.push_back(i);
-        }
-    }
+    // Gather cells in logical token-position order, not physical cell order.
+    const std::vector<uint32_t> cell_idxs = llamaedge_seq_cells_by_pos(cells, seq_id);
 
     size_t required_size = 0;
     size_t offset = 0;
@@ -2699,6 +2757,72 @@ bool llama_kv_cache::layer_import_prepare(
     return true;
 }
 
+bool llama_kv_cache::layer_import_prepare_append(
+        llama_seq_id      seq_id,
+        const llama_pos * pos,
+        uint32_t          cell_count) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return false;
+    }
+    if (cell_count == 0) {
+        return true;
+    }
+    if (!pos) {
+        LLAMA_LOG_ERROR("%s: null pos for non-empty import\n", __func__);
+        return false;
+    }
+
+    const uint32_t strm = seq_to_stream[seq_id];
+    auto & cells = v_cells[strm];
+
+    std::set<llama_pos> present;
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
+            present.insert(cells.pos_get(i));
+        }
+    }
+
+    std::vector<llama_pos> missing;
+    missing.reserve(cell_count);
+    std::set<llama_pos> requested;
+    for (uint32_t i = 0; i < cell_count; ++i) {
+        if (!requested.insert(pos[i]).second) {
+            LLAMA_LOG_ERROR("%s: duplicate requested position %d\n", __func__, (int) pos[i]);
+            return false;
+        }
+        if (present.find(pos[i]) == present.end()) {
+            missing.push_back(pos[i]);
+        }
+    }
+
+    if (missing.empty()) {
+        return true;
+    }
+
+    uint32_t free_count = 0;
+    for (uint32_t i = 0; i < cells.size() && free_count < missing.size(); ++i) {
+        if (cells.is_empty(i)) {
+            free_count++;
+        }
+    }
+    if (free_count < missing.size()) {
+        LLAMA_LOG_ERROR("%s: not enough free cells (%zu needed, %u available)\n", __func__, missing.size(), free_count);
+        return false;
+    }
+
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < cells.size() && found < missing.size(); ++i) {
+        if (cells.is_empty(i)) {
+            cells.pos_set(i, missing[found]);
+            cells.seq_add(i, seq_id);
+            found++;
+        }
+    }
+    return found == missing.size();
+}
+
 size_t llama_kv_cache::layer_import_k(
         llama_seq_id      seq_id,
         int32_t           layer_id,
@@ -2724,14 +2848,8 @@ size_t llama_kv_cache::layer_import_k(
     const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
     const size_t k_size_row = ggml_row_size(layer.k->type, n_embd_k_gqa);
 
-    // Gather cell indices for this sequence (sorted by cell index)
-    std::vector<uint32_t> cell_idxs;
-    cell_idxs.reserve(cells.size());
-    for (uint32_t i = 0; i < cells.size(); ++i) {
-        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
-            cell_idxs.push_back(i);
-        }
-    }
+    // Gather cells in logical token-position order, so imported rows map to metadata/payload position order.
+    const std::vector<uint32_t> cell_idxs = llamaedge_seq_cells_by_pos(cells, seq_id);
 
     const size_t expected_size = cell_idxs.size() * k_size_row;
     if (cell_idxs.empty() || src_size != expected_size) {
@@ -2795,14 +2913,8 @@ size_t llama_kv_cache::layer_import_v(
 
     const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
 
-    // Gather cell indices for this sequence (sorted by cell index)
-    std::vector<uint32_t> cell_idxs;
-    cell_idxs.reserve(cells.size());
-    for (uint32_t i = 0; i < cells.size(); ++i) {
-        if (!cells.is_empty(i) && cells.seq_has(i, seq_id)) {
-            cell_idxs.push_back(i);
-        }
-    }
+    // Gather cells in logical token-position order, so imported rows map to metadata/payload position order.
+    const std::vector<uint32_t> cell_idxs = llamaedge_seq_cells_by_pos(cells, seq_id);
 
     auto * v = layer.v_stream[strm];
     if (!v) {
@@ -2863,6 +2975,186 @@ size_t llama_kv_cache::layer_import_v(
             for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
                 for (const auto & idx : cell_idxs) {
                     const size_t dst_offset = (idx + (size_t)j * kv_size) * v_size_el;
+                    ggml_backend_tensor_set(v, src + offset, dst_offset, v_size_el);
+                    offset += v_size_el;
+                }
+            }
+        }
+    }
+
+    return offset;
+}
+
+size_t llama_kv_cache::layer_import_k_range(
+        llama_seq_id      seq_id,
+        int32_t           layer_id,
+        const llama_pos * pos,
+        uint32_t          cell_count,
+        const uint8_t   * src,
+        size_t            src_size) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+    if (cell_count == 0) {
+        return 0;
+    }
+    if (!pos || !src) {
+        LLAMA_LOG_ERROR("%s: null position or source buffer\n", __func__);
+        return 0;
+    }
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        LLAMA_LOG_ERROR("%s: invalid layer_id %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    const uint32_t strm  = seq_to_stream[seq_id];
+    const auto & cells   = v_cells[strm];
+    const auto & layer   = layers[it->second];
+    const uint32_t il    = layer.il;
+
+    const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+    const size_t k_size_row = ggml_row_size(layer.k->type, n_embd_k_gqa);
+    const size_t expected_size = static_cast<size_t>(cell_count) * k_size_row;
+    if (src_size != expected_size) {
+        LLAMA_LOG_ERROR("%s: K range size mismatch for layer %d (need %zu, got %zu)\n",
+                __func__, layer_id, expected_size, src_size);
+        return 0;
+    }
+
+    std::vector<uint32_t> cell_idxs;
+    if (!llamaedge_seq_cells_for_positions(cells, seq_id, pos, cell_count, cell_idxs)) {
+        LLAMA_LOG_ERROR("%s: requested K positions not present for seq %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+
+    auto * k = layer.k_stream[strm];
+    if (!k) {
+        LLAMA_LOG_ERROR("%s: K tensor is null for layer %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    bool contiguous = true;
+    for (size_t ci = 1; ci < cell_idxs.size(); ++ci) {
+        if (cell_idxs[ci] != cell_idxs[ci - 1] + 1) {
+            contiguous = false;
+            break;
+        }
+    }
+
+    size_t offset = 0;
+    if (contiguous) {
+        ggml_backend_tensor_set(k, src, static_cast<size_t>(cell_idxs[0]) * k_size_row, expected_size);
+        offset = expected_size;
+    } else {
+        for (const auto & idx : cell_idxs) {
+            ggml_backend_tensor_set(k, src + offset, static_cast<size_t>(idx) * k_size_row, k_size_row);
+            offset += k_size_row;
+        }
+    }
+
+    return offset;
+}
+
+size_t llama_kv_cache::layer_import_v_range(
+        llama_seq_id      seq_id,
+        int32_t           layer_id,
+        const llama_pos * pos,
+        uint32_t          cell_count,
+        const uint8_t   * src,
+        size_t            src_size) {
+
+    if (seq_id < 0 || (size_t) seq_id >= seq_to_stream.size()) {
+        LLAMA_LOG_ERROR("%s: invalid seq_id %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+    if (cell_count == 0) {
+        return 0;
+    }
+    if (!pos || !src) {
+        LLAMA_LOG_ERROR("%s: null position or source buffer\n", __func__);
+        return 0;
+    }
+
+    auto it = map_layer_ids.find(layer_id);
+    if (it == map_layer_ids.end()) {
+        LLAMA_LOG_ERROR("%s: invalid layer_id %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    const uint32_t strm  = seq_to_stream[seq_id];
+    const auto & cells   = v_cells[strm];
+    const auto & layer   = layers[it->second];
+    const uint32_t il    = layer.il;
+
+    if (!layer.v) {
+        return 0;
+    }
+
+    const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+    std::vector<uint32_t> cell_idxs;
+    if (!llamaedge_seq_cells_for_positions(cells, seq_id, pos, cell_count, cell_idxs)) {
+        LLAMA_LOG_ERROR("%s: requested V positions not present for seq %d\n", __func__, (int) seq_id);
+        return 0;
+    }
+
+    auto * v = layer.v_stream[strm];
+    if (!v) {
+        LLAMA_LOG_ERROR("%s: V tensor is null for layer %d\n", __func__, layer_id);
+        return 0;
+    }
+
+    bool contiguous = true;
+    for (size_t ci = 1; ci < cell_idxs.size(); ++ci) {
+        if (cell_idxs[ci] != cell_idxs[ci - 1] + 1) {
+            contiguous = false;
+            break;
+        }
+    }
+
+    size_t expected_size = 0;
+    size_t offset = 0;
+    if (!v_trans) {
+        const size_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
+        expected_size = static_cast<size_t>(cell_count) * v_size_row;
+        if (src_size != expected_size) {
+            LLAMA_LOG_ERROR("%s: V range size mismatch for layer %d (need %zu, got %zu)\n",
+                    __func__, layer_id, expected_size, src_size);
+            return 0;
+        }
+        if (contiguous) {
+            ggml_backend_tensor_set(v, src, static_cast<size_t>(cell_idxs[0]) * v_size_row, expected_size);
+            offset = expected_size;
+        } else {
+            for (const auto & idx : cell_idxs) {
+                ggml_backend_tensor_set(v, src + offset, static_cast<size_t>(idx) * v_size_row, v_size_row);
+                offset += v_size_row;
+            }
+        }
+    } else {
+        // Transposed V expects src in [embedding_dim][token_position] order.
+        const size_t v_size_el = ggml_type_size(v->type);
+        const uint32_t kv_size = cells.size();
+        expected_size = static_cast<size_t>(cell_count) * n_embd_v_gqa * v_size_el;
+        if (src_size != expected_size) {
+            LLAMA_LOG_ERROR("%s: V range size mismatch for layer %d (need %zu, got %zu)\n",
+                    __func__, layer_id, expected_size, src_size);
+            return 0;
+        }
+        if (contiguous) {
+            const uint32_t head = cell_idxs[0];
+            for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+                const size_t dst_offset = (head + static_cast<size_t>(j) * kv_size) * v_size_el;
+                ggml_backend_tensor_set(v, src + offset, dst_offset, static_cast<size_t>(cell_count) * v_size_el);
+                offset += static_cast<size_t>(cell_count) * v_size_el;
+            }
+        } else {
+            for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
+                for (const auto & idx : cell_idxs) {
+                    const size_t dst_offset = (idx + static_cast<size_t>(j) * kv_size) * v_size_el;
                     ggml_backend_tensor_set(v, src + offset, dst_offset, v_size_el);
                     offset += v_size_el;
                 }

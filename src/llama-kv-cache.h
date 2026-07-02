@@ -206,6 +206,14 @@ public:
             const llama_pos * pos,
             uint32_t          cell_count);
 
+    // Append/merge cells for the supplied positions without removing existing
+    // seq_id cells. Used by EdgeWeaver token x layer tile receivers so each tile
+    // can be installed as it arrives.
+    bool layer_import_prepare_append(
+            llama_seq_id      seq_id,
+            const llama_pos * pos,
+            uint32_t          cell_count);
+
     // Import K tensor bytes from host buffer to the layer's K stream for seq_id.
     // Returns bytes written (should equal src_size on success), 0 on error.
     size_t layer_import_k(
@@ -219,6 +227,24 @@ public:
     size_t layer_import_v(
             llama_seq_id      seq_id,
             int32_t           layer_id,
+            const uint8_t   * src,
+            size_t            src_size);
+
+    // Range import: source rows are ordered by pos[] rather than by all cells in
+    // the sequence. For transposed V, source layout is [n_embd_v_gqa][cell_count].
+    size_t layer_import_k_range(
+            llama_seq_id      seq_id,
+            int32_t           layer_id,
+            const llama_pos * pos,
+            uint32_t          cell_count,
+            const uint8_t   * src,
+            size_t            src_size);
+
+    size_t layer_import_v_range(
+            llama_seq_id      seq_id,
+            int32_t           layer_id,
+            const llama_pos * pos,
+            uint32_t          cell_count,
             const uint8_t   * src,
             size_t            src_size);
 #endif

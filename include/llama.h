@@ -957,6 +957,13 @@ extern "C" {
                     size_t         dst_size);
 #endif
 
+    // Diagnostic: dump KV cache cell state for a given sequence to stderr.
+    // Available in export-only builds too; without import support it reports
+    // that native import diagnostics are disabled.
+    LLAMA_API void llamaedge_kv_cell_diag(
+            struct llama_context * ctx,
+                    int32_t        seq_id);
+
 #ifdef LLAMAEDGE_ENABLE_KV_LAYER_IMPORT
     //
     // per-layer KV import helper
@@ -990,10 +997,36 @@ extern "C" {
                const uint8_t    * src,
                     size_t         src_size);
 
-    // Diagnostic: dump KV cache cell state for a given sequence to stderr.
-    LLAMA_API void llamaedge_kv_cell_diag(
+    // Prepare cell metadata for incremental tile import without deleting KV cells
+    // already installed for the same sequence. This is the import-side primitive
+    // used by EdgeWeaver token/layer tiles. The legacy prepare() above still
+    // replaces the whole sequence and is only safe for full-sequence installs.
+    LLAMA_API bool   llamaedge_kv_layer_import_prepare_append(
             struct llama_context * ctx,
-                    int32_t        seq_id);
+                    llama_seq_id   seq_id,
+               const llama_pos   * pos,
+                    uint32_t       cell_count);
+
+    // Import K/V rows for an explicit logical position range. Row order in src
+    // must match the order in pos. This keeps token/layer tiles independent and
+    // prevents later chunks from rewriting earlier KV cells.
+    LLAMA_API size_t llamaedge_kv_layer_import_k_range(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+               const llama_pos   * pos,
+                    uint32_t       cell_count,
+               const uint8_t    * src,
+                    size_t         src_size);
+
+    LLAMA_API size_t llamaedge_kv_layer_import_v_range(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                    int32_t        layer_id,
+               const llama_pos   * pos,
+                    uint32_t       cell_count,
+               const uint8_t    * src,
+                    size_t         src_size);
 #endif
 
     //

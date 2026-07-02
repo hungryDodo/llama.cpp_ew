@@ -5,8 +5,29 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+// Keep this header self-contained. Most in-tree users include llama.h first,
+// but EdgeWeaver smoke tests and external shims may include <llamaedge/hooks.h>
+// directly. Mirror llama.h's export macro guard instead of requiring the full
+// llama public header here.
+#ifndef LLAMA_API
+#    ifdef LLAMA_SHARED
+#        if defined(_WIN32) && !defined(__MINGW32__)
+#            ifdef LLAMA_BUILD
+#                define LLAMA_API __declspec(dllexport)
+#            else
+#                define LLAMA_API __declspec(dllimport)
+#            endif
+#        else
+#            define LLAMA_API __attribute__ ((visibility ("default")))
+#        endif
+#    else
+#        define LLAMA_API
+#    endif
+#endif
 
 // Forward declarations
 struct llama_context;
@@ -232,6 +253,9 @@ LLAMA_API int llamaedge_kv_install_chunk(struct llama_context * ctx, int32_t seq
 LLAMA_API llamaedge_frontier * llamaedge_frontier_create(int32_t session_id, uint32_t n_layers);
 LLAMA_API void llamaedge_frontier_destroy(llamaedge_frontier * frontier);
 LLAMA_API void llamaedge_frontier_update(llamaedge_frontier * frontier, int32_t layer_id, uint32_t token_begin, uint32_t token_count);
+// Safe for ordinary llama_decode only when the contiguous token prefix is
+// present for every layer. Partial-layer warm checks are diagnostics/custom
+// graph research paths outside this compatibility ABI.
 LLAMA_API bool llamaedge_warm_threshold_met(const llamaedge_frontier * frontier, int32_t current_decode_pos, const llamaedge_warm_config * config);
 LLAMA_API int32_t llamaedge_frontier_min(const llamaedge_frontier * frontier);
 
@@ -295,6 +319,7 @@ LLAMA_API size_t llamaedge_state_set_data(struct llama_context * ctx, const uint
 // Hook management API (B2 compatibility)
 // ============================================================
 LLAMA_API void llamaedge_hook_init(struct llama_context * ctx);
+LLAMA_API void llamaedge_hook_cleanup(struct llama_context * ctx);
 LLAMA_API int llamaedge_hook_register(struct llama_context * ctx, const llamaedge_hook * hook);
 LLAMA_API int llamaedge_hook_unregister(struct llama_context * ctx, const llamaedge_hook * hook);
 LLAMA_API bool llamaedge_hook_is_active(struct llama_context * ctx, uint32_t hook_type);

@@ -14,6 +14,11 @@
 #include <mutex>
 #include <condition_variable>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <unordered_map>
 
 #ifdef __cplusplus
 extern "C" {
@@ -113,6 +118,8 @@ using llamaedge_pending_span_table = std::vector<std::vector<llamaedge_pending_s
 
 // Hook registry
 llamaedge_hook_registry * llamaedge_get_registry(struct llama_context * ctx);
+void llamaedge_recompute_active_hooks(llamaedge_hook_registry * reg);
+void llamaedge_clear_registry(llamaedge_hook_registry * reg);
 
 // KV cache metadata access
 void llamaedge_get_model_hparams(struct llama_context * ctx,
